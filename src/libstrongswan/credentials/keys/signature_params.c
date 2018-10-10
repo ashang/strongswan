@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Tobias Brunner
+ * Copyright (C) 2017-2018 Tobias Brunner
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,19 +18,40 @@
 #include <asn1/oid.h>
 #include <asn1/asn1_parser.h>
 
-/**
- * Determine the salt length in case it is not configured
+/*
+ * Described in header
  */
-static ssize_t rsa_pss_salt_length(rsa_pss_params_t *pss)
+ssize_t rsa_pss_salt_length(rsa_pss_params_t *params, size_t modbits)
 {
-	ssize_t salt_len = pss->salt_len;
+	ssize_t salt_len = params->salt_len;
+	size_t hash_len;
 
-	if (salt_len <= RSA_PSS_SALT_LEN_DEFAULT)
+	if (salt_len < 0)
 	{
-		salt_len = hasher_hash_size(pss->hash);
-		if (!salt_len)
+		hash_len = hasher_hash_size(params->hash);
+		if (!hash_len)
 		{
 			return -1;
+		}
+
+		switch (salt_len)
+		{
+			case RSA_PSS_SALT_LEN_DEFAULT:
+				salt_len = hash_len;
+				break;
+			case RSA_PSS_SALT_LEN_MAX:
+				if (modbits)
+				{
+					/* emBits = modBits - 1 */
+					modbits -= 1;
+					/* emLen = ceil(emBits/8) */
+					modbits = (modbits+7) / BITS_PER_BYTE;
+					/* account for 0x01 separator in DB, 0xbc trailing byte */
+					salt_len = modbits - hash_len - 2;
+				}
+				break;
+			default:
+				break;
 		}
 	}
 	return salt_len;
@@ -58,22 +79,15 @@ static bool compare_params(signature_params_t *a, signature_params_t *b,
 	{
 		return TRUE;
 	}
-	if (a->params && b->params)
+	if (a->params && b->params &&
+		a->scheme == SIGN_RSA_EMSA_PSS)
 	{
-		switch (a->scheme)
-		{
-			case SIGN_RSA_EMSA_PSS:
-			{
-				rsa_pss_params_t *pss_a = a->params, *pss_b = b->params;
+		rsa_pss_params_t *pss_a = a->params, *pss_b = b->params;
 
-				return pss_a->hash == pss_b->hash &&
-					   pss_a->mgf1_hash == pss_b->mgf1_hash &&
-					   (!strict ||
-						rsa_pss_salt_length(pss_a) == rsa_pss_salt_length(pss_b));
-			}
-			default:
-				break;
-		}
+		return pss_a->hash == pss_b->hash &&
+			   pss_a->mgf1_hash == pss_b->mgf1_hash &&
+			   (!strict ||
+				rsa_pss_salt_length(pss_a, 0) == rsa_pss_salt_length(pss_b, 0));
 	}
 	return FALSE;
 }
@@ -351,7 +365,7 @@ bool rsa_pss_params_build(rsa_pss_params_t *params, chunk_t *asn1)
 		mgf = asn1_algorithmIdentifier_params(OID_MGF1,
 											  asn1_algorithmIdentifier(alg));
 	}
-	salt_len = rsa_pss_salt_length(params);
+	salt_len = rsa_pss_salt_length(params, 0);
 	if (salt_len < 0)
 	{
 		chunk_free(&hash);

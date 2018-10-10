@@ -131,14 +131,10 @@ static bool set_pss_params(private_private_key_t *this, JNIEnv *env,
 	}
 	jhash = hash_name(env, pss->hash);
 	jmgf1 = (*env)->NewStringUTF(env, "MGF1");
-	if (!jhash || !jmgf1)
+	slen = rsa_pss_salt_lengh(pss, this->pubkey->get_keysize(this->pubkey))
+	if (!jhash || !jmgf1 || slen < 0)
 	{
 		return FALSE;
-	}
-	slen = hasher_hash_size(pss->hash);
-	if (pss->salt_len > RSA_PSS_SALT_LEN_DEFAULT)
-	{
-		slen = pss->salt_len;
 	}
 	obj = (*env)->NewObject(env, cls, method_id, jhash, jmgf1, obj, slen, 1);
 	if (!obj)
