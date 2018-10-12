@@ -75,6 +75,30 @@ METHOD(private_key_t, get_keysize, int,
 	return this->pubkey->get_keysize(this->pubkey);
 }
 
+METHOD(private_key_t, supported_signature_schemes, enumerator_t*,
+	private_tpm_private_key_t *this)
+{
+	/* FIXME: only do this for PSS keys, how do we know? */
+	/* FIXME: how do we determine the actual hash algorithm? */
+	hash_algorithm_t digest = HASH_SHA256;
+	rsa_pss_params_t pss_params = {
+		.hash = digest,
+		.mgf1_hash = digest,
+		.salt_len = RSA_PSS_SALT_LEN_MAX,
+	};
+	signature_params_t pss_scheme = {
+		.scheme = SIGN_RSA_EMSA_PSS,
+		.params = &pss_params,
+	};
+
+	if (!rsa_pss_params_set_salt_len(&pss_params, get_keysize(this)))
+	{
+		return enumerator_create_empty();
+	}
+	return enumerator_create_single(signature_params_clone(&pss_scheme),
+									(void*)signature_params_destroy);
+}
+
 METHOD(private_key_t, sign, bool,
 	private_tpm_private_key_t *this, signature_scheme_t scheme, void *params,
 	chunk_t data, chunk_t *signature)
@@ -198,6 +222,7 @@ tpm_private_key_t *tpm_private_key_connect(key_type_t type, va_list args)
 		.public = {
 			.key = {
 				.get_type = _get_type,
+				.supported_signature_schemes = _supported_signature_schemes,
 				.sign = _sign,
 				.decrypt = _decrypt,
 				.get_keysize = _get_keysize,
